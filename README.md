@@ -6,29 +6,61 @@ Tested on Ubuntu 24.04 + tmux 3.4 + GNOME Wayland.
 
 ## Install
 
+### TL;DR — two commands
+
 ```bash
-git clone https://github.com/<you>/anticrab.tmux ~/projects/anticrab.tmux
-cd ~/projects/anticrab.tmux
-./install.sh
+# 1. System dependencies (Wayland; for X11 swap wl-clipboard → xclip)
+sudo apt update && sudo apt install -y tmux git wl-clipboard
+
+# 2. Clone the config straight into ~/.config/tmux and bootstrap TPM
+git clone https://github.com/anticrab/anticrab.tmux ~/.config/tmux \
+    && ~/.config/tmux/install.sh
 ```
 
-The script:
-- symlinks `tmux.conf` to `~/.config/tmux/tmux.conf` (backs up an existing non-symlink),
-- clones [TPM](https://github.com/tmux-plugins/tpm) to `~/.config/tmux/plugins/tpm`.
+Then start tmux and install plugins:
 
-After it finishes, start tmux and press **`Ctrl-a` then `I`** (capital `I`) to install plugins.
+```bash
+tmux                    # start a session
+# inside tmux:
+#   Ctrl-a then I       (capital I) — install plugins via TPM
+#   Ctrl-a then r       — reload config
+```
 
-> If a tmux server is already running, kill it first: `tmux kill-server`. Otherwise it keeps the old config in memory.
+> If a tmux server was already running, kill it first: `tmux kill-server`. Otherwise it keeps the old config in memory.
+>
+> If `~/.config/tmux/` already exists (e.g. from a previous setup), back it up first: `mv ~/.config/tmux ~/.config/tmux.bak.$(date +%s)`.
 
-### Optional system packages
+### What each package is for
 
-| Package | Why |
+| Package | Why it's needed |
 |---|---|
-| `wl-clipboard` | Yank to system clipboard on Wayland (`sudo apt install wl-clipboard`) |
-| `xclip` | Same, for X11 sessions (`sudo apt install xclip`) |
-| A Nerd Font | catppuccin status bar uses ligature glyphs |
+| `tmux` | The terminal multiplexer itself (≥ 3.0; tested on 3.4) |
+| `git` | `install.sh` clones TPM; TPM clones every plugin |
+| `wl-clipboard` *(Wayland)* / `xclip` *(X11)* | Yank to system clipboard from copy mode (`y` / mouse drag) |
 
-The config auto-detects Wayland vs. X11 and uses whichever clipboard tool is on `PATH`.
+The config auto-detects Wayland vs. X11 at load time and uses whichever clipboard tool is on `PATH`.
+
+### Optional
+
+- **A Nerd Font** in your terminal — the catppuccin status bar uses ligature glyphs. Pick one from <https://www.nerdfonts.com/font-downloads> (e.g. JetBrainsMono Nerd Font) and set it as your terminal font.
+
+### Alternative: symlink mode (for hacking on the config)
+
+If you want to keep the repo somewhere else (e.g. `~/projects/anticrab.tmux`) and have edits there take effect immediately without copying, clone there and pass `--symlink`:
+
+```bash
+git clone https://github.com/anticrab/anticrab.tmux ~/projects/anticrab.tmux \
+    && ~/projects/anticrab.tmux/install.sh --symlink
+```
+
+The script will symlink `~/projects/anticrab.tmux/tmux.conf` into `~/.config/tmux/tmux.conf`. From then on, every `git pull` (or local edit) is picked up by the next `Ctrl-a r` reload — no re-running `install.sh`.
+
+### What `install.sh` does
+
+- **Default (copy mode):** copies `tmux.conf` into `~/.config/tmux/tmux.conf`. If the repo is already at `~/.config/tmux/`, this step is a no-op (the file is already there).
+- **`--symlink`:** symlinks the repo's `tmux.conf` into `~/.config/tmux/tmux.conf` instead.
+- In both modes: backs up any existing `tmux.conf` to a timestamped `.bak.*` before replacing, and clones [TPM](https://github.com/tmux-plugins/tpm) into `~/.config/tmux/plugins/tpm` (skipped if already present).
+- Idempotent — safe to re-run.
 
 ## Cheatsheet
 
