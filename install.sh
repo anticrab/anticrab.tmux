@@ -41,24 +41,52 @@ done
 
 mkdir -p "$TARGET_DIR"
 
-backup_existing() {
-    if [[ -e "$TARGET_CONF" || -L "$TARGET_CONF" ]]; then
-        backup="$TARGET_CONF.bak.$(date +%Y%m%d-%H%M%S)"
-        echo "Backing up existing $TARGET_CONF -> $backup"
-        mv "$TARGET_CONF" "$backup"
+# Backup an existing $1 unless it's already the symlink we'd create — that way
+# re-running the script doesn't litter the dir with .bak files.
+backup_unless_already_correct() {
+    local path="$1" want_target="$2"
+    if [[ -L "$path" ]]; then
+        local cur_target
+        cur_target="$(readlink "$path")"
+        if [[ "$cur_target" == "$want_target" ]]; then
+            return 1  # already correct — caller should skip the recreate
+        fi
     fi
+    if [[ -e "$path" || -L "$path" ]]; then
+        local backup="$path.bak.$(date +%Y%m%d-%H%M%S)"
+        echo "Backing up existing $path -> $backup"
+        mv "$path" "$backup"
+    fi
+    return 0
 }
 
 if [[ "$REPO_DIR" == "$TARGET_DIR" ]]; then
     echo "Repo is already at $TARGET_DIR — config in place, nothing to do."
 elif [[ "$MODE" == "symlink" ]]; then
-    backup_existing
-    ln -sfn "$REPO_DIR/tmux.conf" "$TARGET_CONF"
-    echo "Linked: $TARGET_CONF -> $REPO_DIR/tmux.conf"
+    if backup_unless_already_correct "$TARGET_CONF" "$REPO_DIR/tmux.conf"; then
+        ln -sfn "$REPO_DIR/tmux.conf" "$TARGET_CONF"
+        echo "Linked: $TARGET_CONF -> $REPO_DIR/tmux.conf"
+    else
+        echo "Skipped: $TARGET_CONF already points to $REPO_DIR/tmux.conf"
+    fi
+    if backup_unless_already_correct "$TARGET_DIR/scripts" "$REPO_DIR/scripts"; then
+        ln -sfn "$REPO_DIR/scripts" "$TARGET_DIR/scripts"
+        echo "Linked: $TARGET_DIR/scripts -> $REPO_DIR/scripts"
+    else
+        echo "Skipped: $TARGET_DIR/scripts already points to $REPO_DIR/scripts"
+    fi
 else
-    backup_existing
-    cp "$REPO_DIR/tmux.conf" "$TARGET_CONF"
-    echo "Copied: $REPO_DIR/tmux.conf -> $TARGET_CONF"
+    if backup_unless_already_correct "$TARGET_CONF" ""; then
+        cp "$REPO_DIR/tmux.conf" "$TARGET_CONF"
+        echo "Copied: $REPO_DIR/tmux.conf -> $TARGET_CONF"
+    fi
+    # Helper scripts referenced by tmux.conf (e.g. smartsearch.sh). Mirror
+    # them into ~/.config/tmux/scripts/ so the paths in tmux.conf resolve.
+    if [[ -d "$REPO_DIR/scripts" ]]; then
+        mkdir -p "$TARGET_DIR/scripts"
+        cp -p "$REPO_DIR/scripts/"* "$TARGET_DIR/scripts/"
+        echo "Copied: $REPO_DIR/scripts/* -> $TARGET_DIR/scripts/"
+    fi
 fi
 
 if [[ ! -d "$TPM_DIR" ]]; then
