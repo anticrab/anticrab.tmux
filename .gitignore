@@ -2,3 +2,6 @@
 .DS_Store
 *.swp
 *~
+
+# Local Claude Code workspace — specs, plans, settings. Never committed.
+.claude/
