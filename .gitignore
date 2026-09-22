@@ -3,5 +3,9 @@
 *.swp
 *~
 
+# Python bytecode from scripts/tests
+__pycache__/
+*.pyc
+
 # Local Claude Code workspace — specs, plans, settings. Never committed.
 .claude/
