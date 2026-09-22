@@ -80,13 +80,23 @@ else
         cp "$REPO_DIR/tmux.conf" "$TARGET_CONF"
         echo "Copied: $REPO_DIR/tmux.conf -> $TARGET_CONF"
     fi
-    # Helper scripts referenced by tmux.conf (e.g. smartsearch.sh). Mirror
-    # them into ~/.config/tmux/scripts/ so the paths in tmux.conf resolve.
+    # Helper scripts referenced by tmux.conf (smartsearch.sh, copy-selection,
+    # clean-copy). Mirror them into ~/.config/tmux/scripts/ so the paths in
+    # tmux.conf resolve. Recursive, so scripts/tests/ rides along — and so the
+    # copy doesn't fail on a subdirectory (this script runs under `set -e`).
     if [[ -d "$REPO_DIR/scripts" ]]; then
         mkdir -p "$TARGET_DIR/scripts"
-        cp -p "$REPO_DIR/scripts/"* "$TARGET_DIR/scripts/"
-        echo "Copied: $REPO_DIR/scripts/* -> $TARGET_DIR/scripts/"
+        cp -pr "$REPO_DIR/scripts/." "$TARGET_DIR/scripts/"
+        echo "Copied: $REPO_DIR/scripts/ -> $TARGET_DIR/scripts/"
     fi
+fi
+
+# The status bar used to come from catppuccin/tmux; it's plain tmux options now.
+# Drop the stale clone so TPM doesn't keep it around (harmless if never present).
+CATPPUCCIN_DIR="$TARGET_DIR/plugins/tmux"
+if [[ -d "$CATPPUCCIN_DIR" ]] && grep -qs catppuccin "$CATPPUCCIN_DIR/README.md"; then
+    rm -rf "$CATPPUCCIN_DIR"
+    echo "Removed the old catppuccin/tmux plugin (status bar is built in now)."
 fi
 
 if [[ ! -d "$TPM_DIR" ]]; then

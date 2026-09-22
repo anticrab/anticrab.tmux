@@ -1,0 +1,71 @@
+#!/usr/bin/env python3
+"""Clean up a tmux copy-mode selection before it reaches the clipboard.
+
+TUI programs (Claude Code in its scrollback, htop, docker logs, a pager) paint
+their output with a left margin, so a selection copied verbatim pastes with
+leading spaces on every line. This filter removes that noise while keeping the
+text itself — and, importantly, the *relative* indentation of code:
+
+  * trailing whitespace goes, whitespace-only lines become empty lines
+  * the indent shared by every line is removed (`textwrap.dedent` behaviour)
+  * blank lines at both ends go
+  * the final newline goes, so a pasted command doesn't run immediately
+
+`--start-col` is the column the drag started at (tmux's `selection_start_x`).
+It matters because a drag usually begins on the first character of a line, so
+the first line arrives without the indent the rest still carry. Counting that
+line as "flush left" would make a block like `def f():` + body look like "first
+line at column 0, body indented eight" and flatten the body. Adding start-col
+back to the first line's indent gives the block's real shape instead.
+
+Reads the selection on stdin, writes the cleaned text to stdout.
+"""
+
+import argparse
+import sys
+
+
+def clean(text, start_col=0):
+    lines = [line.rstrip() for line in text.split("\n")]
+
+    while lines and not lines[0]:
+        lines.pop(0)
+    while lines and not lines[-1]:
+        lines.pop()
+    if not lines:
+        return ""
+
+    def indent_of(line):
+        return len(line) - len(line.lstrip())
+
+    indents = [indent_of(line) for line in lines[1:] if line]
+    if lines[0]:
+        # The columns before the drag started were part of this line's indent.
+        indents.append(start_col + indent_of(lines[0]))
+    cut = min(indents) if indents else 0
+
+    out = []
+    for index, line in enumerate(lines):
+        if not line:
+            out.append("")
+        elif index == 0:
+            out.append(line[max(cut - start_col, 0):])
+        else:
+            out.append(line[cut:])
+    return "\n".join(out)
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--start-col",
+        type=int,
+        default=0,
+        help="column the selection started at (tmux #{selection_start_x})",
+    )
+    args = parser.parse_args()
+    sys.stdout.write(clean(sys.stdin.read(), args.start_col))
+
+
+if __name__ == "__main__":
+    main()

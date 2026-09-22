@@ -34,15 +34,18 @@ tmux                    # start a session
 
 | Package | Why it's needed |
 |---|---|
-| `tmux` | The terminal multiplexer itself (≥ 3.0; tested on 3.4) |
+| `tmux` | The terminal multiplexer itself (≥ 3.2 for the copy filter; tested on 3.4) |
 | `git` | `install.sh` clones TPM; TPM clones every plugin |
-| `wl-clipboard` *(Wayland)* / `xclip` *(X11)* | Yank to system clipboard from copy mode (`y` / mouse drag) |
+| `wl-clipboard` *(Wayland)* / `xclip` *(X11)* | Copying from copy mode to the system clipboard |
+| `python3` | `scripts/clean-copy`, the filter every copy goes through (preinstalled on Ubuntu) |
 
-The config auto-detects Wayland vs. X11 at load time and uses whichever clipboard tool is on `PATH`.
+`scripts/copy-selection` picks the clipboard tool when you copy — `wl-copy` when a
+Wayland display is set, `xclip` otherwise — and falls back to asking the outer
+terminal for the clipboard over OSC 52 if neither is installed.
 
 ### Optional
 
-- **A Nerd Font** in your terminal — the catppuccin status bar uses ligature glyphs. Pick one from <https://www.nerdfonts.com/font-downloads> (e.g. JetBrainsMono Nerd Font) and set it as your terminal font.
+- **A Nerd Font** in your terminal — for icons in the programs running inside (zvim's tabs and status line). Pick one from <https://www.nerdfonts.com/font-downloads> (e.g. JetBrainsMono Nerd Font) and set it as your terminal font.
 
 ### Alternative: symlink mode (for hacking on the config)
 
@@ -97,9 +100,42 @@ Prefix is **`Ctrl-a`**. Press it twice (`Ctrl-a Ctrl-a`) to send a literal `Ctrl
 | `prefix v` | Enter copy mode |
 | `v` (in copy mode) | Begin selection |
 | `Ctrl-v` (in copy mode) | Toggle rectangular selection |
-| `y` (in copy mode) | Yank to system clipboard, exit |
-| Mouse drag | Yank to system clipboard, exit |
-| `q` | Exit copy mode |
+| `y` / `Enter` (in copy mode) | Copy to the clipboard and leave copy mode |
+| Mouse drag | Copy on release; the selection stays on screen |
+| Double-click | Copy the word — a whole path, URL, `file.cpp:42` or `user@host` |
+| Triple-click | Copy the line |
+| Click | Clear the selection (and leave copy mode when scrolled to the bottom) |
+| `Esc` / `q` | Leave copy mode |
+
+Mouse copies deliberately keep the selection visible, so you can see what you
+took. The flip side: the pane is still in copy mode afterwards, so click, `Esc`
+or `q` before typing again — tmux has no "any key leaves copy mode".
+
+**What lands on the clipboard is cleaned up first.** TUI programs paint a left
+margin around their output, so a selection copied verbatim pastes with leading
+spaces on every line. [`scripts/copy-selection`](scripts/copy-selection) drops
+the trailing padding, the indent shared by every line, blank lines at the ends
+and the final newline (so a pasted command doesn't run on its own). Relative
+indentation survives — copy a function and its body stays indented under it.
+
+That holds even when the drag began on the first character of an indented block,
+because tmux hands the filter `#{selection_start_x}`: the columns before the drag
+started belong to that line's indent.
+[`scripts/clean-copy`](scripts/clean-copy) does the text work and has
+[tests](scripts/tests):
+
+```bash
+python3 -m unittest discover -s scripts/tests
+```
+
+The selection reaches the script through `pipe-no-clear` rather than
+`copy-pipe`, because copy-pipe would put the *unfiltered* text on the clipboard
+itself before the filter ever ran. Exactly one write reaches the system
+clipboard, so the GPaste history gets a single entry.
+
+The gestures behave the same in the layers around tmux: WezTerm cleans its own
+Shift+drag selections, zvim copies on mouse release, and Claude Code already
+copies clean text.
 
 ### Plugins (TPM)
 
@@ -113,9 +149,28 @@ Prefix is **`Ctrl-a`**. Press it twice (`Ctrl-a Ctrl-a`) to send a literal `Ctrl
 
 `tmux-continuum` saves the session every 15 min and restores it on `tmux` start, so manual save/restore is rarely needed.
 
+## Look
+
+JetBrains "Dark" — the CLion New UI scheme — set with plain tmux options (no
+status-bar plugin). [anticrab.wezterm](https://github.com/anticrab/anticrab.wezterm)
+and `jb.nvim` in [anticrab.nvim](https://github.com/anticrab/anticrab.nvim) carry
+the same palette, so terminal, status bar and editor read as one program:
+
+| Colour | Where |
+|---|---|
+| `#1e1f22` | editor / pane background (WezTerm paints it) |
+| `#2b2d30` | status bar |
+| `#43454a` | current window, messages |
+| `#3574f0` | session name, active pane border |
+| `#214283` | selection — also `Visual` in zvim and WezTerm's `selection_bg` |
+| `#114957` | search matches in copy mode |
+
 ## What's in here
 
 - `tmux.conf` — the config (commented section by section)
+- `scripts/copy-selection` — clipboard side of copy mode (cleans, then copies)
+- `scripts/clean-copy` — the text filter, with `scripts/tests`
+- `scripts/smartsearch.sh` — smart-case search for copy mode (`prefix f` / `F`)
 - `install.sh` — symlink + TPM bootstrap
 - `README.md` — this file
 

@@ -1,0 +1,43 @@
+#!/bin/sh
+# Copy a tmux copy-mode selection: clean it, then put it on the clipboard.
+#
+# Called from tmux.conf as
+#     send -X pipe-no-clear "~/.config/tmux/scripts/copy-selection #{selection_start_x}"
+# `pipe-no-clear` hands the raw selection to this script on stdin and — unlike
+# `copy-pipe` — does not create a tmux buffer or emit the OSC 52 clipboard
+# escape itself. That matters: otherwise tmux would put the *unfiltered* text on
+# the clipboard before the filter ever ran, and the clipboard history would end
+# up with both copies.
+#
+# $1 is tmux's `selection_start_x`, passed through to clean-copy so it can tell
+# a mid-line drag from a block of code that starts flush left.
+#
+# The system clipboard gets exactly one write (wl-copy on Wayland, xclip on
+# X11), so GPaste records one entry. The tmux buffer is loaded separately for
+# `prefix ]`, which is internal to tmux and doesn't touch the clipboard.
+
+set -eu
+
+SCRIPT_DIR=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)
+
+text=$("$SCRIPT_DIR/clean-copy" --start-col "${1:-0}")
+[ -n "$text" ] || exit 0
+
+# tmux's own copy buffer, for `prefix ]`.
+printf '%s' "$text" | tmux load-buffer -
+
+# tmux may have been started outside the Wayland session, in which case the
+# server environment still knows the display even though this shell doesn't.
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    WAYLAND_DISPLAY=$(tmux show-environment -g WAYLAND_DISPLAY 2>/dev/null | cut -d= -f2-) || true
+    export WAYLAND_DISPLAY
+fi
+
+if [ -n "${WAYLAND_DISPLAY:-}" ] && command -v wl-copy >/dev/null 2>&1; then
+    printf '%s' "$text" | wl-copy
+elif command -v xclip >/dev/null 2>&1; then
+    printf '%s' "$text" | xclip -selection clipboard -in
+else
+    # No clipboard tool: ask the outer terminal for the clipboard over OSC 52.
+    printf '%s' "$text" | tmux load-buffer -w -
+fi
