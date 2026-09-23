@@ -1,0 +1,7 @@
+[Unit]
+Description=Snapshot the tmux environment (tmux-resurrect)
+Documentation=https://github.com/tmux-plugins/tmux-resurrect
+
+[Service]
+Type=oneshot
+ExecStart=%h/.config/tmux/scripts/persist-save

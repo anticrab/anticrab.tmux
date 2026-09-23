@@ -99,11 +99,46 @@ if [[ -d "$CATPPUCCIN_DIR" ]] && grep -qs catppuccin "$CATPPUCCIN_DIR/README.md"
     echo "Removed the old catppuccin/tmux plugin (status bar is built in now)."
 fi
 
+# Session persistence is scripts/persist-* plus a systemd timer now, not
+# tmux-continuum: both halves of that plugin sit behind a `ps`-based check for
+# other tmux servers that this machine trips permanently (see tmux.conf).
+# @plugin is gone, so TPM would leave the clone orphaned.
+CONTINUUM_DIR="$TARGET_DIR/plugins/tmux-continuum"
+if [[ -d "$CONTINUUM_DIR" ]]; then
+    rm -rf "$CONTINUUM_DIR"
+    echo "Removed tmux-continuum (persistence is scripts/persist-* now)."
+fi
+
 if [[ ! -d "$TPM_DIR" ]]; then
     echo "Cloning TPM..."
     git clone --depth 1 https://github.com/tmux-plugins/tpm "$TPM_DIR"
 else
     echo "TPM already present at $TPM_DIR"
+fi
+
+# systemd user units driving the periodic snapshot. They live in the repo
+# rather than being generated in place, so the schedule is versioned with the
+# config it belongs to.
+UNIT_DIR="$HOME/.config/systemd/user"
+if [[ -d "$REPO_DIR/systemd" ]]; then
+    mkdir -p "$UNIT_DIR"
+    for unit in "$REPO_DIR"/systemd/anticrab-tmux-save.{service,timer}; do
+        [[ -e "$unit" ]] || continue
+        target="$UNIT_DIR/$(basename "$unit")"
+        if [[ "$MODE" == "symlink" ]]; then
+            ln -sfn "$unit" "$target"
+        else
+            cp -p "$unit" "$target"
+        fi
+    done
+    if systemctl --user show-environment >/dev/null 2>&1; then
+        systemctl --user daemon-reload
+        systemctl --user enable --now anticrab-tmux-save.timer >/dev/null
+        echo "Enabled: anticrab-tmux-save.timer (snapshot every 5 min)"
+    else
+        echo "Note: no systemd user session here — run this once you have one:"
+        echo "      systemctl --user enable --now anticrab-tmux-save.timer"
+    fi
 fi
 
 # Clipboard helper hint (non-fatal).
@@ -123,6 +158,7 @@ Done. Next steps:
   1. Start tmux:                          tmux
   2. Inside tmux, install plugins:        Ctrl-a + I    (capital I)
   3. Reload config later with:            Ctrl-a + r
+  4. Check that state is being saved:     ~/.config/tmux/scripts/persist-status
 
 Restart any existing tmux server with `tmux kill-server` before reconnecting,
 otherwise the old config keeps running.

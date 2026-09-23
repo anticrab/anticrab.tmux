@@ -1,0 +1,63 @@
+#!/usr/bin/env bash
+# Is my tmux state actually being saved?
+#
+# Worth having because the thing this replaced failed silently for weeks: TPM
+# runs plugins with output redirected to /dev/null, and resurrect's own
+# messages go nowhere when no client is attached. Every mechanism here can
+# still stall — a hung restore leaves the latch off `ready`, a disabled timer
+# stops the clock — so the check ships with them.
+#
+# Exits non-zero when something is wrong, so it can be wired into a prompt or a
+# periodic check later.
+set -uo pipefail
+
+DIR=~/.local/share/tmux/resurrect
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/anticrab-tmux/persist.log"
+SOCKET="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
+# The snapshot is taken every 5 minutes; twice that plus slack means the
+# mechanism has stopped, not that a save was merely late.
+STALE_MINUTES=12
+
+rc=0
+say() { printf '%-12s %s\n' "$1" "$2"; }
+bad() { printf '  !! %s\n' "$1"; rc=1; }
+
+# --- the server and the latch ------------------------------------------------
+
+if tmux -N -S "$SOCKET" has-session >/dev/null 2>&1; then
+    say server "up, $(tmux -N -S "$SOCKET" list-sessions 2>/dev/null | wc -l) sessions"
+    latch="$(tmux -N -S "$SOCKET" show-option -gqv @anticrab-persist 2>/dev/null)"
+    say latch "${latch:-<empty: persist-restore-once never ran>}"
+    [ "$latch" = ready ] || bad "saving is off while the latch is not 'ready' (now: '${latch}')"
+else
+    say server "not running"
+fi
+
+# --- the timer ---------------------------------------------------------------
+
+active="$(systemctl --user is-active anticrab-tmux-save.timer 2>/dev/null)"
+enabled="$(systemctl --user is-enabled anticrab-tmux-save.timer 2>/dev/null)"
+say timer "${active:-unknown}/${enabled:-unknown}"
+[ "$active" = active ] || bad "the save timer is ${active:-missing}: run 'systemctl --user enable --now anticrab-tmux-save.timer'"
+
+# --- the snapshot itself -----------------------------------------------------
+
+target="$(readlink "$DIR/last" 2>/dev/null)"
+if [ -n "$target" ] && [ -f "$DIR/$target" ]; then
+    age=$(( ( $(date +%s) - $(stat -c %Y "$DIR/$target") ) / 60 ))
+    say snapshot "$target, ${age} min old, $(grep -c '^pane' "$DIR/$target") panes"
+    [ "$age" -le "$STALE_MINUTES" ] || bad "older than ${STALE_MINUTES} min: saving has stopped"
+else
+    say snapshot "no snapshot yet (${DIR}/last is missing or dangling)"
+    bad "no snapshot to restore from"
+fi
+
+contents="$DIR/pane_contents.tar.gz"
+if [ -f "$contents" ]; then
+    say scrollback "$(du -h "$contents" | cut -f1), $(( ( $(date +%s) - $(stat -c %Y "$contents") ) / 60 )) min old"
+else
+    say scrollback "not captured"
+fi
+
+[ -f "$LOG" ] && say log "$LOG"
+exit "$rc"

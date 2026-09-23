@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# Snapshot the tmux environment with tmux-resurrect.
+#
+# This is the whole save side. It is deliberately NOT tmux-continuum: that
+# plugin saves through a `#(continuum_save.sh)` job it prepends to status-right,
+# which only expands while a client is drawing the status bar — so it cannot
+# save a detached server at all, which is the state the machine is in while it
+# shuts down. Worse, it installs that job only when its `ps`-based
+# another_tmux_server_running() check passes, and on this machine it never does
+# (a tmux runs inside the rms container, and every WezTerm client is another
+# matching process). It failed silently for weeks.
+#
+# Triggered from three places, all owned by this repo:
+#   anticrab-tmux-save.timer   every 5 min, works while detached
+#   set-hook client-detached   a WezTerm window was closed
+#   set-hook session-closed    a session was killed
+set -uo pipefail
+
+SAVE=~/.config/tmux/plugins/tmux-resurrect/scripts/save.sh
+DIR=~/.local/share/tmux/resurrect
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/anticrab-tmux/persist.log"
+LOCK="${XDG_RUNTIME_DIR:-/tmp}/anticrab-tmux-save.lock"
+SOCKET="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
+
+log() {
+    mkdir -p "${LOG%/*}"
+    printf '%s save: %s\n' "$(date -Is)" "$*" >>"$LOG"
+}
+
+# A server must exist. `-N` never starts one — without it this would spawn a
+# server and then dump a zero-pane snapshot over the only good one, because
+# resurrect's save_all() re-points the `last` symlink unconditionally.
+tmux -N -S "$SOCKET" has-session >/dev/null 2>&1 || exit 0
+
+# Only the real server, and only after persist-restore-once has finished.
+# Otherwise the timer can fire between server start and restore and save a
+# one-pane server over `last`, and a scratch `tmux -L check` server — which
+# shares this resurrect dir — could overwrite the real snapshot.
+state="$(tmux -N -S "$SOCKET" show-option -gqv @anticrab-persist 2>/dev/null)"
+if [ "$state" != ready ]; then
+    log "skipped, @anticrab-persist='${state}'"
+    exit 0
+fi
+
+# The timer and a hook can land together.
+exec 9>"$LOCK" || exit 0
+flock -n 9 || { log "skipped, another save is running"; exit 0; }
+
+# TMUX= forces save.sh onto the default socket whichever server's run-shell
+# invoked us. `quiet` suppresses the spinner and the display-message, which
+# would otherwise mutate the global display-time option.
+if TMUX= "$SAVE" quiet; then
+    log "ok -> $(readlink "$DIR/last" 2>/dev/null)"
+else
+    log "FAILED rc=$?"
+fi

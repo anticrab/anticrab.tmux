@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# Restore the saved tmux environment, exactly once per server.
+#
+# Invoked from the last line of tmux.conf:
+#   run-shell -b '~/.config/tmux/scripts/persist-restore-once'
+#
+# tmux-continuum's @continuum-restore cannot do this here: continuum_restore.sh
+# gates itself behind its own copy of the "another tmux server is running"
+# heuristic, which no option turns off and which this machine trips permanently.
+set -uo pipefail
+
+RESTORE=~/.config/tmux/plugins/tmux-resurrect/scripts/restore.sh
+LAST=~/.local/share/tmux/resurrect/last
+LOG="${XDG_STATE_HOME:-$HOME/.local/state}/anticrab-tmux/persist.log"
+SOCKET="${TMUX_TMPDIR:-/tmp}/tmux-$(id -u)/default"
+
+log() {
+    mkdir -p "${LOG%/*}"
+    printf '%s restore: %s\n' "$(date -Is)" "$*" >>"$LOG"
+}
+
+# The latch. A global tmux option survives `source-file`, so `prefix r` and
+# `prefix I` can't re-restore; and it dies with the server, so the next boot
+# restores again. No marker files, no timestamps to get wrong.
+[ -z "$(tmux show-option -gqv @anticrab-persist)" ] || exit 0
+
+# Scratch servers (`tmux -L check`) source this same config. They must neither
+# restore nor save, so park the latch at a value persist-save refuses.
+if [ "$(tmux display-message -p '#{socket_path}')" != "$SOCKET" ]; then
+    tmux set-option -gq @anticrab-persist scratch
+    exit 0
+fi
+
+# Only restore into a server that was just started. This is what makes both
+# deploying on a live server and every later `prefix r` safe: an existing
+# server gets saving armed and nothing else.
+age=$(( $(date +%s) - $(tmux display-message -p '#{start_time}') ))
+if [ "$age" -gt 15 ]; then
+    tmux set-option -gq @anticrab-persist ready
+    log "server is ${age}s old, not restoring; saving armed"
+    exit 0
+fi
+
+tmux set-option -gq @anticrab-persist restoring
+
+# restore.sh derives the socket from $TMUX; unset, it would run `tmux -S ""`.
+# run-shell does set TMUX, but pin it so that can never regress.
+TMUX="$(tmux display-message -p '#{socket_path},#{pid},0')"
+export TMUX
+
+# Wait for the first client, up to 10s. At config-parse time WezTerm's client
+# hasn't attached yet, and restore.sh needs one for its switch-client steps —
+# without it the restored sessions exist but nothing moves onto them.
+attached=0
+for _ in $(seq "${ANTICRAB_TMUX_CLIENT_WAIT:-40}"); do
+    if [ "$(tmux list-clients -F '#{client_name}' 2>/dev/null | wc -l)" -ge 1 ]; then
+        attached=1
+        break
+    fi
+    sleep 0.25
+done
+[ "$attached" = 1 ] || log "no client attached after 10s, restoring anyway"
+
+if [ -f "$LAST" ]; then
+    log "start <- $(readlink "$LAST" 2>/dev/null || echo "$LAST")"
+    "$RESTORE" >>"$LOG" 2>&1
+    log "done, sessions: $(tmux list-sessions -F '#{session_name}' 2>/dev/null | tr '\n' ' ')"
+else
+    log "nothing to restore, $LAST is missing"
+fi
+
+tmux set-option -gq @anticrab-persist ready

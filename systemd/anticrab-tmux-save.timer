@@ -1,0 +1,18 @@
+# Deliberately not named tmux.service/.timer: tmux-continuum runs
+# `systemctl --user disable tmux.service` on every config load whenever its
+# @continuum-boot is off, which would silently disable a unit of that name at
+# the next boot.
+#
+# No Persistent=true: a catch-up run would fire at login, exactly while
+# persist-restore-once is still working. A missed window has no value — only
+# the newest state does.
+[Unit]
+Description=Snapshot the tmux environment every 5 minutes
+
+[Timer]
+OnStartupSec=3min
+OnUnitActiveSec=5min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target

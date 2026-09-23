@@ -147,7 +147,72 @@ copies clean text.
 | `prefix Ctrl-s` | Save session (tmux-resurrect) |
 | `prefix Ctrl-r` | Restore session (tmux-resurrect) |
 
-`tmux-continuum` saves the session every 15 min and restores it on `tmux` start, so manual save/restore is rarely needed.
+Saving and restoring happen by themselves — see below. The manual keys are a
+belt-and-braces option, not the mechanism.
+
+## Sessions across a reboot
+
+Sessions, window layouts, working directories and **each pane's scrollback** are
+snapshotted every 5 minutes and the moment you close a WezTerm window, and
+restored when the tmux server next starts.
+
+```bash
+~/.config/tmux/scripts/persist-status   # is my state actually being saved?
+```
+
+That one command is the point of the design, because the setup it replaced
+failed silently for weeks. It reports the server, the save latch, the timer,
+how old the newest snapshot is and how big the scrollback archive is, and exits
+non-zero when any of it has stopped.
+
+### Why not tmux-continuum
+
+`tmux-continuum` is the obvious answer and it does not work here. Both of its
+halves sit behind `another_tmux_server_running()`, which counts **every** uid
+process whose argv starts with `tmux` — a tmux inside a Docker container, and
+one process per WezTerm client, all count as rival servers
+(`scripts/helpers.sh:25-49`). On this machine the check never passes, so it
+installs neither its periodic save nor its boot restore, and TPM runs plugins
+with output redirected to `/dev/null`, so nothing says so.
+
+Its save is also structurally wrong for the case being solved: it works by
+prepending `#(continuum_save.sh)` to `status-right`, and tmux only expands
+`#()` while a client is drawing the status bar. A detached server — what the
+machine has while it shuts down — is never saved.
+
+So this repo owns both halves instead:
+
+| Piece | What it does |
+|---|---|
+| [`scripts/persist-save`](scripts/persist-save) | Takes the snapshot. Refuses to run without a server, before the restore has finished, or from a scratch `tmux -L …` server — any of which would overwrite the good snapshot with a one-pane dump. |
+| [`scripts/persist-restore-once`](scripts/persist-restore-once) | Restores, once per server. Latched on a global tmux option, so `prefix r` cannot re-restore; guarded on server age, so reloading the config on a live server arms saving and touches nothing. |
+| [`scripts/persist-status`](scripts/persist-status) | Says whether the above is still working. |
+| [`systemd/anticrab-tmux-save.timer`](systemd/) | Fires the save every 5 min, including while detached. Installed and enabled by `install.sh`. |
+| `set-hook client-detached` / `session-closed` | Fires the save the instant a WezTerm window closes or a session is killed — the events that actually precede a reboot. |
+
+Both scripts append to `~/.local/state/anticrab-tmux/persist.log`.
+
+### What comes back, and what deliberately does not
+
+**nvim** is restarted in its saved directory as a bare `nvim`, which hands
+straight over to `auto-session` in
+[anticrab.nvim](https://github.com/anticrab/anticrab.nvim) — it restores the
+buffers, the config restores the editor. (The rewrite matters: `ps` records nvim
+as `/snap/nvim/<rev>/usr/bin/nvim`, a path whose revision is gone after the next
+snap refresh.) `less`, `man`, `top` and friends come back too, from resurrect's
+own default list.
+
+**`claude -c`, `make up`, `make exec` and plain shells do not.** `make up` would
+start an unattended `docker compose up --build` at login and arm a teardown;
+`claude -c` would relaunch several TUIs and still could not resume the right
+conversation per pane. Those panes come back as shells in the right directory,
+with their scrollback on screen.
+
+> **Scrollback is stored in plaintext.** `@resurrect-capture-pane-contents` writes
+> what was on each pane's screen — including anything a TUI was showing — to
+> `~/.local/share/tmux/resurrect/pane_contents.tar.gz`, and snapshots are kept
+> for 30 days. Roughly 320 KB compressed here. Turn it off with
+> `set -g @resurrect-capture-pane-contents 'off'` if that trade isn't worth it.
 
 ## Look
 
@@ -171,6 +236,8 @@ the same palette, so terminal, status bar and editor read as one program:
 - `scripts/copy-selection` — clipboard side of copy mode (cleans, then copies)
 - `scripts/clean-copy` — the text filter, with `scripts/tests`
 - `scripts/smartsearch.sh` — smart-case search for copy mode (`prefix f` / `F`)
+- `scripts/persist-save`, `scripts/persist-restore-once`, `scripts/persist-status` — session persistence, with `scripts/tests`
+- `systemd/` — the user timer that drives the periodic snapshot
 - `install.sh` — symlink + TPM bootstrap
 - `README.md` — this file
 
