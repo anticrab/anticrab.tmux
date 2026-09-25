@@ -4,6 +4,8 @@ Personal tmux config. Companion to [anticrab.nvim](https://github.com/anticrab/a
 
 Tested on Ubuntu 24.04 + tmux 3.4 + GNOME Wayland.
 
+Panes run zsh, configured by [anticrab.zsh](https://github.com/anticrab/anticrab.zsh) — `default-shell` and `default-command` name it explicitly, which is also what decides the shell of panes brought back by resurrect after a reboot.
+
 ## Install
 
 ### TL;DR — two commands
